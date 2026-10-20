@@ -1,0 +1,16 @@
+{
+  "upstream_version": "0.16.2",
+  "host": "FLURSYS",
+  "adaptations": [
+    "Application bar supplied by host instead of upstream app_bar",
+    "Exact Body::host_brep_json transfer",
+    "Original package identity and legal notices retained",
+    "Document::host_geometry_hash guards solver products against view-only transitions"
+  ],
+  "geometry_units": "CAD millimetres; solver metres",
+  "presentation": "Original egui command dialogs, browser and wgpu viewport hosted in Geometry; timeline disabled",
+  "upstream_repository": "https://github.com/tangency-labs/solidcraft.git",
+  "upstream_commit": "e4d9015f68bddbdd9a0359ef8d8f83cfbb5b54de",
+  "fork_repository": "https://github.com/A1i98/solidcraft.git",
+  "cargo_feature": "solidcraft-ui-egui/host-integration"
+}
