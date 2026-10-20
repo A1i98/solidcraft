@@ -1721,3 +1721,11 @@ mod display_mesh_tests;
 #[cfg(test)]
 #[path = "regularization_protection_tests.rs"]
 mod regularization_protection_tests;
+
+// Host integration: transfer exact topology without a display-mesh or STEP round trip.
+impl Body {
+    pub fn host_brep_json(&self) -> crate::Result<String> {
+        self.require_brep("CFD geometry")?;
+        serde_json::to_string(&*self.solid).map_err(|e| crate::KernelError::Invalid(e.to_string()))
+    }
+}

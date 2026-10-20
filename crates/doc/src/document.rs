@@ -3324,3 +3324,11 @@ pub fn valid_density(d: f64) -> bool {
 pub fn material_density(name: &str) -> Option<f64> {
     MATERIALS.iter().find(|(n, _)| n.eq_ignore_ascii_case(name.trim())).map(|(_, d)| *d)
 }
+
+// Host integration: identify the authoritative document transferred to solver geometry.
+impl Document {
+    pub fn host_geometry_hash(&self) -> String {
+        use sha2::{Digest, Sha256};
+        format!("{:x}", Sha256::digest(self.to_json().as_bytes()))
+    }
+}

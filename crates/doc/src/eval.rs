@@ -6218,3 +6218,17 @@ mod named_face_lookup_tests {
         assert_eq!(on_copy.note(&name), None);
     }
 }
+
+// Host integration: construction planes alone must not invalidate a CFD mesh.
+impl ModelState {
+    pub fn host_geometry_hash(&self)->Result<String> {
+        use sha2::{Digest,Sha256};
+        let mut hash=Sha256::new();
+        if !self.bodies.is_empty() {
+            for b in &self.bodies {hash.update(b.name.as_bytes());hash.update(b.body.host_brep_json()?.as_bytes());}
+        } else {
+            for s in &self.sketches {hash.update(serde_json::to_vec(&(&s.plane,&s.sketch)).map_err(|e|DocError::Invalid(e.to_string()))?);}
+        }
+        Ok(format!("{:x}",hash.finalize()))
+    }
+}
