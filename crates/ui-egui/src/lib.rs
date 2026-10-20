@@ -1392,6 +1392,7 @@ impl SolveApp {
     fn cad_ui(&mut self, ui: &mut egui::Ui, report_input: &mut Option<issue_report::CadInput>) {
         scenario::clear_handles();
         self.poll_deferred(ui.ctx());
+        #[cfg(not(feature = "host-integration"))]
         toolbar::app_bar(self, ui);
         issue_report::CadInput::block(self, ui, report_input);
         file_load::show(self, ui.ctx());
