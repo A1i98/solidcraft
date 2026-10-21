@@ -266,7 +266,7 @@ pub fn fits_beside_a_dialog(app: &SolveApp, ctx: &egui::Context) -> bool {
 /// Is the palette on screen? It stays for as long as a sketch is being edited, a command dialog
 /// open or not: the dialog takes the left edge of the viewport and the palette keeps the right.
 pub fn visible(app: &SolveApp, ctx: &egui::Context) -> bool {
-    editing(app) && (app.dialog.is_none() || fits_beside_a_dialog(app, ctx))
+    editing(app) && (app.dialog.is_none() || (!crate::frame::left_docking(ctx) && fits_beside_a_dialog(app, ctx)))
 }
 
 /// A small disclosure triangle for the Options section: pointing right when collapsed, down
@@ -365,8 +365,9 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     let bottom = vp.bottom().min(ctx.content_rect().bottom()) - 8.0;
     // Prefer the space below Axis View, but reclaim it on short/HiDPI views.
     let top = (vp.top() + crate::viewport::AXIS_VIEW_CLEARANCE).min((bottom - 360.0).max(vp.top()));
-    let anchor = egui::pos2(vp.right(), top);
-    let frame = crate::frame::dock_frame(ctx, crate::frame::Side::Right);
+    let side = crate::frame::preferred_side(ctx);
+    let anchor = egui::pos2(side.anchor_x(vp), top);
+    let frame = crate::frame::dock_frame(ctx, side);
     let shown = |k: &str| match k {
         "grid" => !opts.hide_grid,
         "snap" => !opts.no_snap,
@@ -390,12 +391,13 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     let has_curves = !selected_curves(app).is_empty();
     let selected_types = selected_linetypes(app);
     let margin_bottom = f32::from(frame.inner_margin.bottom);
-    let response = crate::frame::docked(
+    let response = crate::frame::docked_on(
         app.tr("ui.heading_sketch_palette"),
         egui::Id::new("sc_sketch_palette"),
         anchor,
         bottom - anchor.y,
         crate::frame::Width::Normal,
+        side,
     )
     .frame(frame)
     .show(ctx, |ui| {

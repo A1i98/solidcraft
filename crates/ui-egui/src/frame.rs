@@ -38,6 +38,18 @@ pub enum Side {
     Left,
 }
 
+/// Embedding hosts can choose a single left properties dock per UI context.
+/// The standalone application keeps its existing right-dock default.
+pub fn set_left_docking(ctx: &egui::Context, enabled: bool) {
+    ctx.data_mut(|d| d.insert_temp(egui::Id::new("cad_left_properties"), enabled));
+}
+pub fn left_docking(ctx: &egui::Context) -> bool {
+    ctx.data(|d| d.get_temp::<bool>(egui::Id::new("cad_left_properties"))).unwrap_or(false)
+}
+pub fn preferred_side(ctx: &egui::Context) -> Side {
+    if left_docking(ctx) { Side::Left } else { Side::Right }
+}
+
 impl Side {
     /// The x of the viewport edge this side docks against.
     pub fn anchor_x(self, viewport: egui::Rect) -> f32 {

@@ -134,12 +134,15 @@ pub fn panel(app: &mut SolveApp, ctx: &egui::Context, at: Pos2) {
     let mut apply = false;
     let mut cancel = false;
     let t = Tokens::get();
-    crate::frame::docked(
+    let side = crate::frame::preferred_side(ctx);
+    let at = if side == crate::frame::Side::Left {egui::pos2(app.viewport.rect.unwrap_or_else(||ctx.content_rect()).left(),at.y)}else{at};
+    crate::frame::docked_on(
         format!("Redefine Sketch Plane: {name}"),
         egui::Id::new("sc_redefine"),
         at,
         app.viewport.rect.map(|rect| rect.bottom()).unwrap_or_else(|| ctx.content_rect().bottom()) - at.y - 8.0,
         crate::frame::Width::Normal,
+        side,
     )
     .open(&mut open)
     .scroll([false, true])

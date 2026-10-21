@@ -2291,7 +2291,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     let top = (vp.top() + crate::viewport::AXIS_VIEW_CLEARANCE).min((vp.bottom() - 360.0).max(vp.top()));
     // The Sketch Palette owns the right edge for as long as a sketch is being edited. A dialog
     // started there docks at the left instead, so neither panel hides the other.
-    let side = if crate::sketch_palette::editing(app) && crate::sketch_palette::fits_beside_a_dialog(app, ctx) {
+    let side = if crate::frame::left_docking(ctx) || (crate::sketch_palette::editing(app) && crate::sketch_palette::fits_beside_a_dialog(app, ctx)) {
         crate::frame::Side::Left
     } else {
         crate::frame::Side::Right
