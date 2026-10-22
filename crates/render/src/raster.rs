@@ -82,6 +82,13 @@ pub(crate) fn shade(n: Vec3, view_dir: Vec3, base: [f64; 3]) -> [f64; 3] {
 
 /// Render a scene with the camera into an RGBA canvas of `w × h` pixels.
 pub fn render(scene: &Scene, cam: &Camera, w: usize, h: usize) -> Canvas {
+    render_mode(scene, cam, w, h, false)
+}
+/// Flat colour CPU fallback for scientific fields, without lighting or silhouettes.
+pub fn render_unlit(scene: &Scene, cam: &Camera, w: usize, h: usize) -> Canvas {
+    render_mode(scene, cam, w, h, true)
+}
+fn render_mode(scene: &Scene, cam: &Camera, w: usize, h: usize, unlit: bool) -> Canvas {
     let (w, h) = (w.clamp(1, MAX_DIM), h.clamp(1, MAX_DIM));
     let (sw, sh) = (w * SS, h * SS);
     let mut c = Canvas::new(sw, sh);
@@ -201,9 +208,9 @@ pub fn render(scene: &Scene, cam: &Camera, w: usize, h: usize) -> Canvas {
                                 c.put(x, y, tinted.map(|v| v * k), 1.0);
                                 continue;
                             }
-                            let mut col = shade(n, view_dir, base);
+                            let mut col = if unlit { base } else { shade(n, view_dir, base) };
                             let ndv = n.dot(view_dir).abs();
-                            if curved && ndv < 0.14 {
+                            if !unlit && curved && ndv < 0.14 {
                                 let a = 1.0 - ndv / 0.14;
                                 for (k, e) in col.iter_mut().zip([0.07, 0.08, 0.10]) {
                                     *k = *k * (1.0 - a) + e * a;

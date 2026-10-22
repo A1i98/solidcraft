@@ -139,6 +139,15 @@ impl Capturer {
 
     /// `scene` seen by `cam`, `width` × `height` pixels: straight RGBA, rows top to bottom.
     pub fn rgba(&self, scene: &Scene, cam: &Camera, width: u32, height: u32) -> Result<Vec<u8>> {
+        self.rgba_mode(scene, cam, width, height, false)
+    }
+
+    /// Flat colour capture for scientific fields; uses the viewport's unlit triangle path.
+    pub fn rgba_unlit(&self, scene: &Scene, cam: &Camera, width: u32, height: u32) -> Result<Vec<u8>> {
+        self.rgba_mode(scene, cam, width, height, true)
+    }
+
+    fn rgba_mode(&self, scene: &Scene, cam: &Camera, width: u32, height: u32, unlit: bool) -> Result<Vec<u8>> {
         if !(1..=self.max_side).contains(&width) || !(1..=self.max_side).contains(&height) {
             return Err(GpuError::Render(format!("a picture is 1 to {} pixels a side, not {width} × {height}", self.max_side)));
         }
@@ -153,7 +162,11 @@ impl Capturer {
             }
             _ => None,
         };
-        let frame = frame(scene, cam, [width, height], state.key, access);
+        let mut frame = frame(scene, cam, [width, height], state.key, access);
+        if unlit {
+            frame.slot = Arc::new(Mutex::new(Some(scene_geometry_mode(scene, true))));
+            frame.outline = false;
+        }
         let (device, queue) = (&self.device, &self.queue);
         let scopes = error_scopes(device);
         let size = wgpu::Extent3d { width, height, depth_or_array_layers: 1 };
@@ -354,6 +367,9 @@ fn frame(scene: &Scene, cam: &Camera, [width, height]: [u32; 2], key: u64, acces
 /// ([`solidcraft_render::SceneMesh::glass`]) goes into the scene's glass, drawn as the viewport
 /// draws glass: far sides first, then near sides, so what lies inside it shows through.
 pub fn scene_geometry(scene: &Scene) -> GpuScene {
+    scene_geometry_mode(scene, false)
+}
+fn scene_geometry_mode(scene: &Scene, unlit: bool) -> GpuScene {
     let mut sc = GpuScene::default();
     for m in &scene.meshes {
         let alpha = (m.alpha() * 255.0).round().clamp(0.0, 255.0) as u8;
@@ -365,7 +381,11 @@ pub fn scene_geometry(scene: &Scene) -> GpuScene {
             let [Some(a), Some(b), Some(c)] = t.map(|k| mesh.positions.get(k as usize).copied()) else { continue };
             let flat = (b - a).cross(c - a).normalized().unwrap_or(Vec3::Z);
             for (k, p) in t.iter().zip([a, b, c]) {
-                let n = mesh.normals.get(*k as usize).copied().filter(|n| n.is_finite() && n.len() > 0.5).unwrap_or(flat);
+                let n = if unlit {
+                    Vec3::ZERO
+                } else {
+                    mesh.normals.get(*k as usize).copied().filter(|n| n.is_finite() && n.len() > 0.5).unwrap_or(flat)
+                };
                 if m.glass() {
                     sc.glass_tri(p.to_f32(), n.to_f32(), col);
                 } else {
