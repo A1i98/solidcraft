@@ -13,6 +13,7 @@ fn moved_block(h: &mut Harness) {
     h.app.run("solid.extrude", json!({"distance": 5})).unwrap();
     let body = h.app.session.world_state().bodies[0].name.clone();
     h.app.run("solid.move", json!({"bodies": [body], "translate": [500, 0, 0]})).unwrap();
+    h.app.preferences.look_at_anim = false;
     h.settle();
 }
 
@@ -59,7 +60,7 @@ fn home_and_fit_frame_the_moved_body_not_its_old_place() {
     h.app.run("sketch.circle.center", json!({"center": [-300, 0], "radius": 5})).unwrap();
     h.app.run("sketch.finish", json!({})).unwrap();
     near_box(crate::viewport::view_bounds(&h.app), [-305., -5., 0.], [510., 10., 5.]);
-    h.app.ui.show_sketches = false;
+    h.app.session.visibility.hidden_folders.push("c0/sketches".into());
     near_box(crate::viewport::view_bounds(&h.app), [500., 0., 0.], [510., 10., 5.]);
 }
 

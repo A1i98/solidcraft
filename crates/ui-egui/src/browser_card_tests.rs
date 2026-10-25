@@ -3,6 +3,59 @@ use crate::scenario::{Harness, handle_at, rect_of};
 use crate::shell::{LayoutMode, SHELL_GAP};
 
 #[test]
+fn browser_body_clicks_fill_and_toggle_save_mesh_inputs() {
+    for mode in [LayoutMode::Floating, LayoutMode::Docked] {
+        let mut h = Harness::new();
+        h.app.ui.layout = mode;
+        for (name, x) in [("One", 0), ("Two", 20)] {
+            h.app.run("solid.box", json!({"length":10,"width":10,"height":10,"corner":[x,0,0],"operation":"new_body","body_name":name})).unwrap();
+        }
+        h.app.start("file.save_mesh");
+        h.settle();
+        for (clicked, expected) in [("One", vec!["One"]), ("Two", vec!["One", "Two"]), ("One", vec!["Two"])] {
+            h.step(&json!({"click":{"handle":format!("row:{clicked}")}})).unwrap();
+            let d = h.app.dialog.as_ref().unwrap();
+            let crate::dialogs::Kind::SaveMesh(k) = &d.kind else { panic!("Save as Mesh is open") };
+            let commands = crate::dialogs_save_mesh::commands(k, &d.inputs).unwrap();
+            assert_eq!(commands[0].1["bodies"], json!(expected), "{mode:?}: clicked {clicked}");
+            assert!(crate::dialogs_save_mesh::ready(&d.inputs));
+            assert!(h.app.session.selection.is_empty(), "dialog picks do not change the global selection");
+        }
+        h.step(&json!({"click":{"handle":"row:Two"}})).unwrap();
+        assert!(!crate::dialogs_save_mesh::ready(&h.app.dialog.as_ref().unwrap().inputs));
+        h.step(&json!({"key":"Escape"})).unwrap();
+        h.step(&json!({"click":{"handle":"row:One"}})).unwrap();
+        assert_eq!(h.app.session.selection, vec![Sel::Body { name: "One".into() }]);
+    }
+}
+
+#[test]
+fn browser_body_clicks_respect_the_active_dialog_input() {
+    let mut h = Harness::new();
+    for (name, x) in [("One", 0), ("Two", 20)] {
+        h.app.run("solid.box", json!({"length":10,"width":10,"height":10,"corner":[x,0,0],"operation":"new_body","body_name":name})).unwrap();
+    }
+    h.app.start("solid.combine");
+    h.app.dialog.as_mut().unwrap().preview_enabled = false;
+    h.settle();
+    h.step(&json!({"click":{"handle":"row:One"}})).unwrap();
+    assert_eq!(h.app.dialog.as_ref().unwrap().active, 1, "a target pick advances to Tool Bodies");
+    h.step(&json!({"click":{"handle":"row:Two"}})).unwrap();
+    let d = h.app.dialog.as_ref().unwrap();
+    assert_eq!(d.inputs[0].items, vec![Sel::Body { name: "One".into() }]);
+    assert_eq!(d.inputs[1].items, vec![Sel::Body { name: "Two".into() }]);
+    h.call("ui.dialogInput", json!({"index":0}));
+    h.step(&json!({"click":{"handle":"row:Two"}})).unwrap();
+    assert_eq!(h.app.dialog.as_ref().unwrap().inputs[0].items, vec![Sel::Body { name: "Two".into() }], "a single input replaces its pick");
+    h.step(&json!({"key":"Escape"})).unwrap();
+    h.app.start("solid.fillet");
+    h.settle();
+    h.step(&json!({"click":{"handle":"row:One"}})).unwrap();
+    assert!(h.app.dialog.as_ref().unwrap().inputs.iter().all(|i| i.items.is_empty()), "a body is not an edge");
+    assert!(h.app.session.selection.is_empty(), "an incompatible pick does not leak into the global selection");
+}
+
+#[test]
 fn browser_card_shrinks_and_scrolls_without_covering_history() {
     let mut h = Harness::new();
     h.call("ui.resize", json!({"width":1400,"height":900}));
@@ -34,8 +87,8 @@ fn browser_card_shrinks_and_scrolls_without_covering_history() {
 
     h.call("ui.set", json!({"layout":"docked"}));
     h.settle();
-    assert!(rect_of("browser:card").is_none());
-    assert_eq!(h.app.viewport.rect.unwrap().left(), 250.0);
+    assert_eq!(rect_of("browser:card").unwrap().left(), 0.0);
+    assert_eq!(h.app.viewport.rect.unwrap().left(), 0.0);
     assert!(drawn_rows().iter().all(|(_, rect, _, _)| rect.height() == 26.0));
     h.call("ui.set", json!({"layout":"floating"}));
     h.app.tree.collapsed.insert("c0".into());
@@ -99,6 +152,74 @@ fn card_and_column_keep_body_eyes_menus_and_group_drops() {
     }
 }
 
+/// A second click on a Document Settings entry closes the window it opened, the way that
+/// window's own × does, and a third opens it again (#4150): the Units menu, Preferences (a change
+/// made there is put back), Parameters (a value typed but not applied is dropped) and Design
+/// Properties (nothing typed there is saved).
+#[test]
+fn a_second_click_on_a_document_settings_entry_closes_its_window() {
+    for mode in [LayoutMode::Floating, LayoutMode::Docked] {
+        let mut h = Harness::new();
+        h.app.ui.layout = mode;
+        h.app.run("parameters.add", json!({"name":"width","expression":"10 mm"})).unwrap();
+        h.settle();
+        h.step(&json!({"click":{"chevron":"Document Settings"}})).unwrap();
+        h.settle();
+        // The Units, Precision and Parameters labels carry their values.
+        let row = |start: &str| {
+            let (_, rect, _, _) = drawn_rows().into_iter().find(|(label, ..)| label.starts_with(start)).unwrap();
+            json!({"click":[rect.center().x, rect.center().y]})
+        };
+
+        h.step(&row("Units")).unwrap();
+        assert!(h.app.viewport.context_menu.is_some() && h.app.menu.target == Target::Units, "{mode:?}: the first click opens the Units menu");
+        h.step(&row("Units")).unwrap();
+        h.frames(2);
+        assert!(h.app.viewport.context_menu.is_none(), "{mode:?}: the second click closes it instead of reopening it");
+        h.step(&row("Units")).unwrap();
+        assert!(h.app.viewport.context_menu.is_some(), "{mode:?}: and a third opens it again");
+        h.step(&json!({"key":"Escape"})).unwrap();
+
+        h.step(&row("Precision")).unwrap();
+        h.frames(2);
+        assert!(h.app.prefs_window.open, "{mode:?}: the first click opens Preferences");
+        let decimals = h.app.preferences.angle_decimals;
+        h.app.preferences.angle_decimals = decimals + 2;
+        h.step(&row("Precision")).unwrap();
+        h.frames(2);
+        assert!(!h.app.prefs_window.open, "{mode:?}: the second click closes it");
+        assert_eq!(h.app.preferences.angle_decimals, decimals, "{mode:?}: and puts back what changed there, as × does");
+        h.step(&row("Precision")).unwrap();
+        h.frames(2);
+        assert!(h.app.prefs_window.open, "{mode:?}: a third opens it again");
+        h.step(&json!({"key":"Escape"})).unwrap();
+
+        h.step(&row("Parameters")).unwrap();
+        h.frames(2);
+        assert!(h.app.params.is_some(), "{mode:?}: the first click opens Parameters");
+        h.step(&json!({"click":{"handle":"param:width"}})).unwrap();
+        h.step(&json!({"key":"A","cmd":true})).unwrap();
+        h.step(&json!({"text":"25 mm"})).unwrap();
+        h.step(&row("Parameters")).unwrap();
+        h.frames(2);
+        assert!(h.app.params.is_none(), "{mode:?}: the second click closes it");
+        assert_eq!(h.app.session.doc.param("width").unwrap().expr, "10 mm", "{mode:?}: and drops a value typed but not applied");
+        h.step(&row("Parameters")).unwrap();
+        assert!(h.app.params.is_some(), "{mode:?}: a third opens it again");
+        h.app.params = None;
+
+        h.step(&row("Design Properties")).unwrap();
+        assert!(h.app.design_properties.is_some(), "{mode:?}: the first click opens Design Properties");
+        h.app.design_properties.as_mut().unwrap().fields[0] = "Typed".into();
+        h.frames(2);
+        h.step(&row("Design Properties")).unwrap();
+        assert!(h.app.design_properties.is_none(), "{mode:?}: the second click closes it");
+        assert_eq!(h.app.session.doc.metadata.project(), None, "{mode:?}: and saves nothing typed there");
+        h.step(&row("Design Properties")).unwrap();
+        assert!(h.app.design_properties.is_some(), "{mode:?}: a third opens it again");
+    }
+}
+
 #[test]
 fn browser_header_folds_the_floating_card_to_its_header_and_back() {
     let mut h = Harness::new();
@@ -138,8 +259,8 @@ fn tiny_floating_windows_never_panic() {
     }
 }
 
-/// Both shell layouts share one tree and one saved width. Docked can switch its card
-/// back into a column; Floating keeps its card when the overlay preference is cleared.
+/// Both shell layouts share one content-hugging tree and one saved width.
+/// The translucency preference never creates a second browser renderer.
 #[test]
 fn one_browser_keeps_its_resized_width_across_layouts_and_overlay_preferences() {
     let mut h = Harness::new();
@@ -150,15 +271,11 @@ fn one_browser_keeps_its_resized_width_across_layouts_and_overlay_preferences() 
             h.app.preferences.browser_float = overlay;
             h.app.preferences.browser_width = 310.0;
             h.settle();
-            let card = mode == LayoutMode::Floating || overlay;
-            assert_eq!(rect_of("browser:card").is_some(), card);
+            assert!(rect_of("browser:card").is_some());
             assert_eq!(crate::scenario::handles("browser:header").len(), 1, "only one browser header");
             assert_eq!(drawn_rows().iter().filter(|(name, ..)| name == "Untitled").count(), 1, "only one tree");
-            if card {
-                assert!((rect_of("browser:card").unwrap().width() - 310.0).abs() < 1.0);
-            } else {
-                assert_eq!(h.app.viewport.rect.unwrap().left(), 310.0);
-            }
+            assert!((rect_of("browser:card").unwrap().width() - 310.0).abs() < 1.0);
+            assert_eq!(h.app.viewport.rect.unwrap().left(), 0.0);
             let rail = handle_at("left-browser-rail").unwrap();
             h.call("ui.drag", json!({"x0":rail.x,"y0":rail.y,"x1":rail.x+60.0,"y1":rail.y,"steps":6}));
             h.settle();
@@ -167,7 +284,7 @@ fn one_browser_keeps_its_resized_width_across_layouts_and_overlay_preferences() 
             h.app.ui.layout = LayoutMode::Docked;
             h.app.preferences.browser_float = false;
             h.settle();
-            assert!((h.app.viewport.rect.unwrap().left() - width).abs() < 1.0, "the column uses the card's saved width");
+            assert!((rect_of("browser:card").unwrap().width() - width).abs() < 1.0, "compact keeps the saved width");
         }
     }
 }
@@ -213,12 +330,8 @@ fn resizing_browser_card_and_column_persists_width_including_floating_preference
         h.settle();
         let width = h.app.preferences.browser_width;
         assert!(width > crate::prefs::DEFAULT_BROWSER_WIDTH + 40.0, "{mode:?}, float={float}, width={width}");
-        if mode == LayoutMode::Floating || float {
-            assert!((rect_of("browser:card").unwrap().width() - width).abs() < 1.0);
-            assert_eq!(h.app.viewport.rect.unwrap(), before, "the card leaves the projection intact");
-        } else {
-            assert!((h.app.viewport.rect.unwrap().left() - width).abs() < 1.0);
-        }
+        assert!((rect_of("browser:card").unwrap().width() - width).abs() < 1.0);
+        assert_eq!(h.app.viewport.rect.unwrap(), before, "browser resizing leaves the projection intact");
         let mut restored = SolveApp::new(Default::default(), Default::default());
         restored.load_prefs(&h.app.prefs());
         assert_eq!(restored.preferences.browser_width, width);
@@ -235,7 +348,7 @@ fn browser_width_rejects_hostile_preferences_and_tiny_windows_still_fit() {
     assert_eq!(browser_width(f32::MAX), MAX_BROWSER_WIDTH);
     let available = Rect::from_min_size(Pos2::ZERO, vec2(100.0, 300.0));
     for top_gap in [0.0, crate::shell::SHELL_GAP] {
-        let bounds = floating_bounds(available, None, MAX_BROWSER_WIDTH, top_gap);
+        let bounds = panel_bounds(available, None, MAX_BROWSER_WIDTH, top_gap);
         assert!(available.contains_rect(bounds));
     }
 }
@@ -269,7 +382,7 @@ fn collapsed_rail_shares_header_hover_inset_and_expands_from_its_whole_card() {
             let bounds = Rect::from_min_size(Pos2::ZERO, vec2(600.0, 700.0));
             let draw = |app: &mut SolveApp, events| {
                 crate::test_support::frame(&ctx, egui::RawInput { screen_rect: Some(bounds), events, ..Default::default() }, |ui| {
-                    floating(app, ui, bounds);
+                    browser(app, ui);
                 })
             };
             for _ in 0..3 {

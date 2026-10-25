@@ -10,6 +10,7 @@ fn step(h: &mut Harness, value: Value) {
 }
 fn fixture() -> Harness {
     let mut h = Harness::new();
+    h.app.preferences.look_at_anim = false;
     for (command, params) in [
         ("sketch.create", json!({"plane":"XY"})),
         ("sketch.line", json!({"points":[[-30,10],[-15,10]]})),
@@ -204,7 +205,7 @@ fn sketch_preselected_points_toggle_once_and_empty_shift_box_keeps_reference() {
 #[test]
 fn sketch_modify_previews_use_the_active_occurrences_world_placement() {
     let mut h = Harness::new();
-    let part = h.app.run("component.create", json!({"name":"Part"})).unwrap();
+    let part = h.app.run("component.create", json!({"name":"Part","grounded":false})).unwrap();
     h.app.run("sketch.create", json!({"plane":"XY"})).unwrap();
     let sid = h.app.session.active_sketch.unwrap();
     h.app.run("sketch.line", json!({"points":[[-30,0],[-20,0]]})).unwrap();

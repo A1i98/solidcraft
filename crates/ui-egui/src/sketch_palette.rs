@@ -237,7 +237,7 @@ fn width(vp: egui::Rect) -> f32 {
 
 /// The viewport the palette docks into.
 fn viewport(app: &SolveApp, ctx: &egui::Context) -> egui::Rect {
-    crate::shell::content_rect(app, app.viewport.rect.unwrap_or_else(|| ctx.content_rect()))
+    crate::agent_chat::tool_space(app, crate::shell::content_rect(app, app.viewport.rect.unwrap_or_else(|| ctx.content_rect())))
 }
 
 /// Is a sketch being edited? That is the palette's own condition.
@@ -334,13 +334,14 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     if !vp.is_finite() || !vp.is_positive() {
         return;
     }
-    let bottom = vp.bottom().min(ctx.content_rect().bottom()) - crate::shell::SHELL_GAP;
     let side = crate::frame::preferred_side(ctx);
+    let gap = crate::ui_kit::Container::new(ctx, crate::ui_kit::Surface::Palette).gap();
+    let bottom = vp.bottom().min(ctx.content_rect().bottom()) - gap;
     let top = crate::shell::panel_top(app, vp, bottom, side);
     let frame = crate::ui_kit::Panel::palette_frame(ctx, app.ui.layout);
     let anchor_x = match side {
-        crate::frame::Side::Left => vp.left() + crate::shell::SHELL_GAP + frame.stroke.width,
-        crate::frame::Side::Right => vp.right() - crate::shell::SHELL_GAP - frame.stroke.width,
+        crate::frame::Side::Left => vp.left() + gap + frame.stroke.width,
+        crate::frame::Side::Right => vp.right() - gap - frame.stroke.width,
     };
     let anchor = egui::pos2(anchor_x, top + frame.stroke.width);
     let shown = |key: &str| match key {
@@ -366,9 +367,16 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     let feature = active_feature(app);
     let has_curves = !selected_curves(app).is_empty();
     let selected_types = if has_curves { selected_linetypes(app) } else { std::array::from_fn(|i| mode(app) == i as u8) };
-    let panel = crate::ui_kit::Panel::new(app.tr_label("ui.palette_sketch_options"), egui::Id::new("sc_sketch_palette"), anchor, vp, side, frame)
-        .width(width(vp));
-    let response = panel.window().show(ctx, |ui| {
+    let panel = crate::ui_kit::Panel::new(
+        app.tr_label("ui.palette_sketch_options"),
+        egui::Id::new("sc_sketch_palette"),
+        anchor,
+        vp,
+        side,
+        frame,
+    )
+    .width(width(vp));
+    let response = panel.window(ctx).show(ctx, |ui| {
         panel.palette(ui, bottom, top, |ui, part| match part {
             crate::ui_kit::Part::Header => {
                 let status = if !solved || !geometry || remaining == 0 {
@@ -398,7 +406,8 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                     ui.horizontal(|ui| {
                         let text = crate::i18n::format("sketch.untied_ends", &[("count", &untied_ends.to_string())]);
                         ui.label(egui::RichText::new(text).size(t.font_small).color(t.warning)).on_hover_text(app.tr("ui.untied_ends_tip"));
-                        let button = crate::ui_kit::button(ui, "ui.tie_ends", crate::ui_kit::Button::Normal).on_hover_text(app.tr("ui.tie_ends_tip"));
+                        let button =
+                            crate::ui_kit::button(ui, app.tr("ui.tie_ends"), crate::ui_kit::Button::Normal).on_hover_text(app.tr("ui.tie_ends_tip"));
                         crate::scenario::publish_handle("sketch_palette:tie_ends", button.rect.center());
                         tie = button.clicked();
                     });
@@ -607,7 +616,12 @@ mod tests {
         h.app.run("sketch.create", json!({"plane":"XY"})).unwrap();
         h.settle();
         let at = crate::scenario::handle_at("sketch_palette:finish").expect("the palette ends in Finish Sketch");
-        assert!(crate::scenario::rect_of("sketch_palette:look_at").is_some(), "Look At | Slice stay");
+        let look = crate::scenario::rect_of("sketch_palette:look_at").expect("Look At | Slice stay");
+        let slice = crate::scenario::rect_of("sketch_palette:slice").unwrap();
+        let finish = crate::scenario::rect_of("sketch_palette:finish").unwrap();
+        assert_eq!((finish.left(), finish.right()), (look.left(), slice.right()), "Finish {finish:?} shares the pair's inset");
+        assert_eq!(finish.height(), Tokens::get().form_button_height);
+        assert_eq!(look.top() - finish.bottom(), 2.0 * Tokens::get().space_6, "same spacing as the pair");
         assert!(crate::scenario::handle_at("button:sketch.finish").is_some(), "and so does the ribbon's Finish");
         h.call("ui.click", json!({"x":at.x,"y":at.y}));
         assert!(h.app.session.active_sketch.is_none());
@@ -791,6 +805,7 @@ mod tests {
         h.settle();
         assert!(h.widget("Open 2").is_some(), "the status counts the open ends");
         assert!(h.widget("Untied 4").is_some(), "the status counts the untied ends");
+        assert!(h.widget("Tie").is_some(), "the Tie button shows its label, not its catalog key");
         let at = crate::scenario::handle_at("sketch_palette:tie_ends").unwrap();
         h.call("ui.click", json!({"x": at.x, "y": at.y}));
         h.settle();
@@ -1009,7 +1024,7 @@ mod tests {
     }
 
     /// A double Esc on a sketch left blank takes it away (no empty sketch in the browser or the
-    /// timeline, one undo step) and puts the view back; one line is enough to keep it.
+    /// timeline, one undo step) and leaves the view alone; one line is enough to keep it.
     #[test]
     fn a_quick_double_escape_discards_a_blank_sketch_and_keeps_one_with_a_line() {
         let mut h = crate::scenario::Harness::new();
@@ -1023,7 +1038,7 @@ mod tests {
         h.step(&json!({"key":"Escape"})).unwrap();
         h.step(&json!({"key":"Escape"})).unwrap();
         h.settle();
-        crate::scenario::check(&mut h, &json!({"sketching": false, "camera": {"yaw_deg": -45, "pitch_deg": 35}})).unwrap();
+        crate::scenario::check(&mut h, &json!({"sketching": false, "camera": {"yaw_deg": 0, "pitch_deg": 90}})).unwrap();
         assert_eq!(h.app.ui.tab, "MODEL");
         assert!(h.app.session.doc.features.is_empty(), "the blank sketch is gone");
         assert!(crate::scenario::handles("timeline:").iter().all(|(n, _)| !n.contains("Sketch")));
