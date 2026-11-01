@@ -217,6 +217,97 @@ fn block_in_component() -> Session {
     s
 }
 
+#[test]
+fn move_expression_distances_follow_world_axes_in_a_turned_component() {
+    for translate in [json!([0, -4, 0]), json!(["0 mm", "-4 mm", "0 mm"]), json!([0, "-4", 0])] {
+        let mut s = block_in_component();
+        run(&mut s, "occurrence.move", json!({"occurrence": "C:1", "axis": [1, 0, 0], "angle": "90 deg", "translate": [50, 10, 20]}));
+        let before = world_bbox(&s, "Body1");
+        run(&mut s, "solid.move", json!({"bodies": ["Body1"], "translate": translate}));
+        let after = world_bbox(&s, "Body1");
+        let shift = Vec3::new(0.0, -4.0, 0.0);
+        assert!(near(after.0, before.0 + shift) && near(after.1, before.1 + shift), "{translate}: {before:?} -> {after:?}");
+        assert!((volume(&mut s) - 24_000.0).abs() < 1e-6);
+    }
+}
+
+#[test]
+fn move_expression_distances_keep_parameters_through_rebuild_and_reopen() {
+    for copy in [false, true] {
+        let mut s = block_in_component();
+        run(&mut s, "parameters.add", json!({"name": "travel", "expression": "4 mm"}));
+        // An oblique turn mixes all three coordinates; the placement's translation must
+        // never contribute to the displacement vector.
+        run(&mut s, "occurrence.move", json!({"occurrence": "C:1", "axis": [1, 2, 3], "angle": "37 deg", "translate": [50, 10, 20]}));
+        run(&mut s, "component.activate", json!({"component": "C"}));
+        let before = world_bbox(&s, "Body1");
+        run(&mut s, "solid.move", json!({"bodies": ["Body1"], "translate": [2, "-travel", "1 cm"], "copy": copy}));
+        let moved = s.model.state().bodies.last().unwrap().name.clone();
+        let assert_shift = |s: &Session, travel: f64| {
+            let after = world_bbox(s, &moved);
+            let shift = Vec3::new(2.0, -travel, 10.0);
+            assert!(near(after.0, before.0 + shift) && near(after.1, before.1 + shift), "copy={copy}, travel={travel}: {before:?} -> {after:?}");
+            if copy {
+                let original = world_bbox(s, "Body1");
+                assert!(near(original.0, before.0) && near(original.1, before.1));
+            }
+        };
+        assert_shift(&s, 4.0);
+        run(&mut s, "parameters.change", json!({"name": "travel", "expression": "8 mm"}));
+        assert_shift(&s, 8.0);
+        let mut reopened = Session::new(solidcraft_doc::Document::from_json(&s.doc.to_json()).unwrap());
+        assert_shift(&reopened, 8.0);
+        run(&mut reopened, "parameters.change", json!({"name": "travel", "expression": "12 mm"}));
+        assert_shift(&reopened, 12.0);
+        assert!((volume(&mut reopened) - if copy { 48_000.0 } else { 24_000.0 }).abs() < 1e-6);
+    }
+}
+
+/// Edit Feature passes a primitive's placement through as saved, so changing the radius of
+/// Leaf B's rod in the Hinge Assembly leaves the leaf where it was (#2926).
+#[test]
+fn editing_a_primitive_in_a_turned_component_keeps_its_placement() {
+    let sample = crate::sample::samples().into_iter().find(|x| x.name == "Hinge Assembly").unwrap();
+    let mut s = Session::default();
+    s.run_script(&(sample.script)()).unwrap();
+    let (plate_lo, plate_hi) = world_bbox(&s, "Body3");
+    let (rod_lo, rod_hi) = world_bbox(&s, "Body4");
+    // What the dialog sends: the saved definition, with the new radius.
+    let definition = run(&mut s, "timeline.inspect", json!({"feature": "Cylinder2"}))["definition"].clone();
+    let params = json!({"base": definition["base"], "axis": definition["axis"], "radius": "6", "height": "40", "operation": "new_body"});
+    run(&mut s, "timeline.redefine", json!({"feature": "Cylinder2", "command": "solid.cylinder", "params": params}));
+    let after = run(&mut s, "timeline.inspect", json!({"feature": "Cylinder2"}))["definition"].clone();
+    assert_eq!((&after["base"], &after["axis"]), (&definition["base"], &definition["axis"]));
+    let (lo, hi) = world_bbox(&s, "Body3");
+    assert!(near(lo, plate_lo) && near(hi, plate_hi), "the leaf moved: {lo:?} {hi:?}");
+    // The rod grows about its own axis (its mesh is faceted, so its size is close, not exact).
+    let (lo, hi) = world_bbox(&s, "Body4");
+    assert!(((lo + hi) * 0.5).dist((rod_lo + rod_hi) * 0.5) < 1e-3, "the rod moved: {lo:?} {hi:?}");
+    let (size, before) = (hi - lo, rod_hi - rod_lo);
+    assert!((size.x - before.x).abs() < 1e-6 && (size.y - 12.0).abs() < 0.05 && (size.z - 12.0).abs() < 0.05, "{size:?}");
+}
+
+/// A new placement given to `timeline.redefine` is still a world point.
+#[test]
+fn a_new_primitive_placement_is_still_mapped_from_the_world() {
+    let mut s = moved_part();
+    run(&mut s, "component.activate", json!({"component": "Part"}));
+    run(&mut s, "solid.cylinder", json!({"base": [60, 10, 10], "radius": 2, "height": 5, "operation": "new", "name": "Peg"}));
+    let base = |s: &mut Session| run(s, "timeline.inspect", json!({"feature": "Peg"}))["definition"]["base"].clone();
+    assert_eq!(base(&mut s), json!([10.0, 10.0, 10.0]));
+    let redefine = |s: &mut Session, at: Value| {
+        run(
+            s,
+            "timeline.redefine",
+            json!({"feature": "Peg", "command": "solid.cylinder", "params": {"base": at, "radius": 3, "height": 5, "operation": "new"}}),
+        );
+    };
+    redefine(&mut s, json!([10, 10, 10]));
+    assert_eq!(base(&mut s), json!([10.0, 10.0, 10.0]));
+    redefine(&mut s, json!([70, 10, 10]));
+    assert_eq!(base(&mut s), json!([20.0, 10.0, 10.0]));
+}
+
 /// The user's "big square": a sketch made in the root on a moved component's face lies on the
 /// face where it is shown, its projected loop on the face's edges (moved and turned), and it
 /// follows when the occurrence moves on.
